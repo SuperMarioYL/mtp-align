@@ -1,0 +1,41 @@
+# build scratch
+.builder_*
+.build_metadata*
+.stage_*
+.spawn.*
+PUBLISH_BLOCKED.md
+BUILD_SETUP_NEXT_STEPS.md
+DRIFT_REPORT.md
+GIT_AUTHOR_DRIFT.md
+
+# python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.env
+.python-version
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+
+# editor / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*~
+
+# model assistants — keep the contributor panel clean
+.claude/
+CLAUDE.md
