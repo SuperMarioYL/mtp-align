@@ -1,0 +1,108 @@
+{
+  "schema": 1,
+  "name": "mtp-align",
+  "github": "https://github.com/SuperMarioYL/mtp-align",
+  "host": "mtp-align.lei6393.com",
+  "lang": { "primary": "zh", "toggle": true },
+  "accent": ["#10A37F", "#2EE0A8", "#0A6B52"],
+  "hero": {
+    "eyebrow": {
+      "zh": "本地 · 可验的提速 · 一行接入",
+      "en": "Local · Verifiable speedup · One-line hookup"
+    },
+    "headline": {
+      "zh": "工具调用不再打断解码\n本地 tps 重新跑满",
+      "en": "Tool calls stop breaking the decode\nLocal tps runs full again"
+    },
+    "sub": {
+      "zh": "多 token 解码模型一步能吐多个 token，可 agent 每次工具调用都在窗口中途打断流，把多 token 吞吐压回单 token。MTP-Align 把工具调用对齐到解码窗口边界，让每个窗口跑满。",
+      "en": "A multi-token decode model emits several tokens per step — yet every agent tool call cuts the stream mid-window and collapses that throughput back to one token at a time. MTP-Align lines tool calls up to the decode-window boundary so every window runs to completion."
+    },
+    "command": "mtp-align serve --upstream http://localhost:8080",
+    "cta": { "zh": "开始使用", "en": "Get started" },
+    "ctaGithub": { "zh": "在 GitHub 查看", "en": "View on GitHub" },
+    "scroll": { "zh": "往下看找回了什么", "en": "See what it recovers" }
+  },
+  "advantages": [
+    {
+      "title": {
+        "zh": "找回来的，是每次工具调用丢掉的吞吐",
+        "en": "It recovers the throughput every tool call throws away"
+      },
+      "body": {
+        "zh": "你的模型一步能解出多个 token，可 agent 一触发工具调用就打断解码流，把多 token 批次剩下的 token 全浪费、吞吐压回单 token。这部分损失没有别的工具在量——MTP-Align 把工具调用对齐到解码窗口边界，让没被用上的解码能力变回实在的本地提速。",
+        "en": "Your model can decode several tokens per step, but the moment the agent fires a tool call it cuts the decode stream and wastes the rest of that multi-token batch — throughput drops back to one token at a time. No other tool measures that loss. MTP-Align aligns tool calls to the decode-window boundary and turns unused decode capacity into real local speedup."
+      },
+      "chips": [
+        "› 多 token 批次不再半途作废",
+        "› 解码连续性可量化"
+      ]
+    },
+    {
+      "title": {
+        "zh": "一行环境变量，agent 不改代码",
+        "en": "One env var — no agent code change"
+      },
+      "body": {
+        "zh": "在你跑着的 agent 和模型服务之间插一个进程：agent 只改一个 base URL 指过来，工具调用就自动对齐到解码窗口边界。不用 fork agent、不用改它的循环、不引入云依赖。",
+        "en": "Drop one process between your running agent and model server: point the agent's base URL at it and tool calls auto-align to the decode-window boundary. No forking the agent, no rewriting its loop, no cloud dependency."
+      },
+      "chips": [
+        "› 单进程 · 本地",
+        "› 兼容现有 agent 接口"
+      ]
+    },
+    {
+      "title": {
+        "zh": "提速靠数字，不靠感觉",
+        "en": "Speedup by the numbers, not vibes"
+      },
+      "body": {
+        "zh": "一条命令打印工具调用打断 vs 对齐两种模式的前后 tps 表——吞吐差多少、解码连续性多少，白纸黑字。合成模型上界 +9.2%，真正的 kill-gate 是打你跑着的模型服务：差不到 5%，项目就到此为止。",
+        "en": "One command prints a before/after tps table — interrupted vs. aligned — so the throughput delta and decode continuity are in black and white. The synthetic upper bound is +9.2%; the real kill-gate hits your live model server: under 5% and the project stops."
+      },
+      "chips": [
+        "› 合成上界 +9.2%",
+        "› 真 kill-gate 打你的模型服务"
+      ]
+    },
+    {
+      "title": {
+        "zh": "本地 · 开源 · 无云",
+        "en": "Local · Open source · No cloud"
+      },
+      "body": {
+        "zh": "代理和基准都 MIT 开源、免费。解码本来就在你本机——所以没有云、没有账号、没有外发。舰队遥测和 SLA 是以后的事，单机提速这一核心，永不设墙。",
+        "en": "The proxy and benchmark are MIT open source and free. Decode already runs on your machine — so no cloud, no account, no egress. Fleet telemetry and SLA are for later; the core act of single-node speedup is never gated."
+      },
+      "chips": [
+        "› MIT · 免费",
+        "› 无云 · 无账号"
+      ]
+    }
+  ],
+  "scene": {
+    "kind": "particle-field"
+  },
+  "cta": {
+    "headline": {
+      "zh": "让没被用上的解码能力，变回本地提速",
+      "en": "Turn unused decode capacity back into local speedup"
+    },
+    "sub": {
+      "zh": "开源、MIT、无付费墙。本地提速这一核心，永不设墙。",
+      "en": "Open source, MIT, no paywall. The core act of local speedup is never gated."
+    },
+    "button": {
+      "zh": "去 GitHub",
+      "en": "Get it on GitHub"
+    }
+  },
+  "footer": {
+    "tag": {
+      "zh": "给本地多 token 解码模型的 agent 工具调用批对齐代理",
+      "en": "The agent tool-call batching proxy for local multi-token decode models"
+    }
+  },
+  "content_version": "v0.1.0"
+}
