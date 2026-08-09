@@ -39,3 +39,6 @@ coverage.xml
 # model assistants — keep the contributor panel clean
 .claude/
 CLAUDE.md
+.builder_prompt.md
+.pytest_cache
+.venv
