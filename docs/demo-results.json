@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "source_revision": "1eaac376d9ccf3a2d94b7e3e4e04b1a67a137ba0",
+  "scope": "One queued synthetic tool call passes through the production four-token scheduling state machine. No GPU decode, SSE token-boundary validation or throughput measurement.",
+  "steps": [
+    {
+      "label": "Recorded run",
+      "body": "One queued synthetic tool call passes through the production four-token scheduling state machine. No GPU decode, SSE token-boundary validation or throughput measurement.",
+      "command": ".venv/bin/python examples/presentation-demo.py",
+      "output": "token 0: wait\ntoken 1: wait\ntoken 2: wait\ntoken 3: flush\nflushed calls: ['lookup']\nwindows completed: 1"
+    }
+  ]
+}

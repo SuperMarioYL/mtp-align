@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "mtp-align"
 version = "0.1.0"
-description = "DeepSeek-V4 MTP-aware agent-loop scheduler — batch tool calls to MTP decode windows."
+description = "Experiment with a window-based tool-call flush scheduler and an OpenAI-compatible streaming proxy."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"

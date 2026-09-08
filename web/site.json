@@ -1,108 +1,215 @@
 {
-  "schema": 1,
+  "schema": 3,
   "name": "mtp-align",
   "github": "https://github.com/SuperMarioYL/mtp-align",
   "host": "mtp-align.lei6393.com",
-  "lang": { "primary": "zh", "toggle": true },
-  "accent": ["#10A37F", "#2EE0A8", "#0A6B52"],
+  "palette": "auto",
+  "lang": {
+    "primary": "en",
+    "toggle": true
+  },
+  "meta": {
+    "visual_style": "neon-particle",
+    "demo_source": "docs/demo-results.json"
+  },
   "hero": {
-    "eyebrow": {
-      "zh": "本地 · 可验的提速 · 一行接入",
-      "en": "Local · Verifiable speedup · One-line hookup"
-    },
     "headline": {
-      "zh": "工具调用不再打断解码\n本地 tps 重新跑满",
-      "en": "Tool calls stop breaking the decode\nLocal tps runs full again"
+      "en": "Explore tool-call buffering at explicit window boundaries.",
+      "zh": "探索明确窗口边界上的工具调用缓冲。"
     },
     "sub": {
-      "zh": "多 token 解码模型一步能吐多个 token，可 agent 每次工具调用都在窗口中途打断流，把多 token 吞吐压回单 token。MTP-Align 把工具调用对齐到解码窗口边界，让每个窗口跑满。",
-      "en": "A multi-token decode model emits several tokens per step — yet every agent tool call cuts the stream mid-window and collapses that throughput back to one token at a time. MTP-Align lines tool calls up to the decode-window boundary so every window runs to completion."
+      "en": "MTP-Align provides a small scheduling state machine that queues tool calls and flushes them at configured token-count boundaries.",
+      "zh": "MTP-Align 提供小型调度状态机，排队工具调用，并在配置的 token 计数边界刷新。"
     },
-    "command": "mtp-align serve --upstream http://localhost:8080",
-    "cta": { "zh": "开始使用", "en": "Get started" },
-    "ctaGithub": { "zh": "在 GitHub 查看", "en": "View on GitHub" },
-    "scroll": { "zh": "往下看找回了什么", "en": "See what it recovers" }
+    "href": "#quickstart"
   },
   "advantages": [
     {
       "title": {
-        "zh": "找回来的，是每次工具调用丢掉的吞吐",
-        "en": "It recovers the throughput every tool call throws away"
+        "en": "Explicit state transitions",
+        "zh": "明确状态变化"
       },
       "body": {
-        "zh": "你的模型一步能解出多个 token，可 agent 一触发工具调用就打断解码流，把多 token 批次剩下的 token 全浪费、吞吐压回单 token。这部分损失没有别的工具在量——MTP-Align 把工具调用对齐到解码窗口边界，让没被用上的解码能力变回实在的本地提速。",
-        "en": "Your model can decode several tokens per step, but the moment the agent fires a tool call it cuts the decode stream and wastes the rest of that multi-token batch — throughput drops back to one token at a time. No other tool measures that loss. MTP-Align aligns tool calls to the decode-window boundary and turns unused decode capacity into real local speedup."
-      },
-      "chips": [
-        "› 多 token 批次不再半途作废",
-        "› 解码连续性可量化"
-      ]
+        "en": "Window progress and pending calls can be inspected.",
+        "zh": "窗口进度与待处理调用可检查。"
+      }
     },
     {
       "title": {
-        "zh": "一行环境变量，agent 不改代码",
-        "en": "One env var — no agent code change"
+        "en": "Deterministic experiment",
+        "zh": "确定性实验"
       },
       "body": {
-        "zh": "在你跑着的 agent 和模型服务之间插一个进程：agent 只改一个 base URL 指过来，工具调用就自动对齐到解码窗口边界。不用 fork agent、不用改它的循环、不引入云依赖。",
-        "en": "Drop one process between your running agent and model server: point the agent's base URL at it and tool calls auto-align to the decode-window boundary. No forking the agent, no rewriting its loop, no cloud dependency."
-      },
-      "chips": [
-        "› 单进程 · 本地",
-        "› 兼容现有 agent 接口"
-      ]
+        "en": "The scheduler runs without an inference server.",
+        "zh": "调度器可不依赖推理服务器运行。"
+      }
     },
     {
       "title": {
-        "zh": "提速靠数字，不靠感觉",
-        "en": "Speedup by the numbers, not vibes"
+        "en": "Configurable timing policy",
+        "zh": "可配置刷新策略"
       },
       "body": {
-        "zh": "一条命令打印工具调用打断 vs 对齐两种模式的前后 tps 表——吞吐差多少、解码连续性多少，白纸黑字。合成模型上界 +9.2%，真正的 kill-gate 是打你跑着的模型服务：差不到 5%，项目就到此为止。",
-        "en": "One command prints a before/after tps table — interrupted vs. aligned — so the throughput delta and decode continuity are in black and white. The synthetic upper bound is +9.2%; the real kill-gate hits your live model server: under 5% and the project stops."
+        "en": "Compare boundary and eager flush behavior.",
+        "zh": "可以比较边界刷新与即时刷新行为。"
+      }
+    }
+  ],
+  "demo": {
+    "title": {
+      "en": "Run it on a complete example",
+      "zh": "运行完整示例"
+    },
+    "note": {
+      "en": "Queue one lookup call and feed four explicit token events to a window-size-four scheduler.",
+      "zh": "排队一次 lookup 调用，并向窗口大小为四的调度器输入四个明确 token 事件。"
+    },
+    "source": "https://github.com/SuperMarioYL/mtp-align/blob/main/docs/demo-results.json",
+    "steps": [
+      {
+        "label": "Recorded run",
+        "body": "One queued synthetic tool call passes through the production four-token scheduling state machine. No GPU decode, SSE token-boundary validation or throughput measurement.",
+        "command": ".venv/bin/python examples/presentation-demo.py",
+        "output": "token 0: wait\ntoken 1: wait\ntoken 2: wait\ntoken 3: flush\nflushed calls: ['lookup']\nwindows completed: 1",
+        "image": "/assets/presentation/demo-0-light.svg",
+        "imageDark": "/assets/presentation/demo-0-dark.svg"
+      }
+    ]
+  },
+  "quickstart": {
+    "title": {
+      "en": "Try it locally",
+      "zh": "本地上手"
+    },
+    "body": {
+      "en": "Queue one lookup call and feed four explicit token events to a window-size-four scheduler.",
+      "zh": "排队一次 lookup 调用，并向窗口大小为四的调度器输入四个明确 token 事件。"
+    },
+    "steps": [
+      {
+        "title": {
+          "en": "Install from source",
+          "zh": "从源码安装"
+        },
+        "code": "git clone https://github.com/SuperMarioYL/mtp-align.git\ncd mtp-align\nuv venv .venv\nuv pip install --python .venv/bin/python -e .\nsource .venv/bin/activate"
       },
-      "chips": [
-        "› 合成上界 +9.2%",
-        "› 真 kill-gate 打你的模型服务"
-      ]
+      {
+        "title": {
+          "en": "Run the included example",
+          "zh": "运行随仓示例"
+        },
+        "code": ".venv/bin/python examples/presentation-demo.py"
+      }
+    ]
+  },
+  "limitations": [
+    {
+      "en": "An SSE content chunk is not necessarily one model token, and token counts do not establish actual MTP forward-pass boundaries.",
+      "zh": "SSE 内容片段不一定对应一个模型 token，计数也不能确定真实 MTP 前向传播边界。"
     },
     {
-      "title": {
-        "zh": "本地 · 开源 · 无云",
-        "en": "Local · Open source · No cloud"
-      },
-      "body": {
-        "zh": "代理和基准都 MIT 开源、免费。解码本来就在你本机——所以没有云、没有账号、没有外发。舰队遥测和 SLA 是以后的事，单机提速这一核心，永不设墙。",
-        "en": "The proxy and benchmark are MIT open source and free. Decode already runs on your machine — so no cloud, no account, no egress. Fleet telemetry and SLA are for later; the core act of single-node speedup is never gated."
-      },
-      "chips": [
-        "› MIT · 免费",
-        "› 无云 · 无账号"
-      ]
+      "en": "No GPU throughput benefit is established. The synthetic benchmark uses assumed timing and interruption costs.",
+      "zh": "尚未建立 GPU 吞吐收益证据；合成基准使用假设时间与中断成本。"
+    },
+    {
+      "en": "The proxy is experimental; request isolation, partial tool-call reconstruction and production backpressure require further validation.",
+      "zh": "代理属于实验实现；请求隔离、工具调用分片拼装与生产背压需要进一步验证。"
     }
   ],
   "scene": {
-    "kind": "particle-field"
+    "kind": "neon-graph",
+    "fallback": "/assets/presentation/scene-dark.svg",
+    "fallbackLight": "/assets/presentation/scene-light.svg"
   },
-  "cta": {
-    "headline": {
-      "zh": "让没被用上的解码能力，变回本地提速",
-      "en": "Turn unused decode capacity back into local speedup"
+  "story": {
+    "intro": {
+      "title": {
+        "en": "A concrete task",
+        "zh": "从实际任务出发"
+      },
+      "body": {
+        "en": "A buffering policy is easier to evaluate when its state and flush decisions are explicit. This project separates that deterministic mechanism from the inference performance hypothesis it is intended to explore.",
+        "zh": "缓冲策略的状态与刷新决策明确后，才便于评估。项目将确定性机制与希望验证的推理性能假设分开。"
+      }
     },
-    "sub": {
-      "zh": "开源、MIT、无付费墙。本地提速这一核心，永不设墙。",
-      "en": "Open source, MIT, no paywall. The core act of local speedup is never gated."
-    },
-    "button": {
-      "zh": "去 GitHub",
-      "en": "Get it on GitHub"
-    }
-  },
-  "footer": {
-    "tag": {
-      "zh": "给本地多 token 解码模型的 agent 工具调用批对齐代理",
-      "en": "The agent tool-call batching proxy for local multi-token decode models"
-    }
-  },
-  "content_version": "v0.1.0"
+    "sections": [
+      {
+        "title": {
+          "en": "Follow the operation",
+          "zh": "处理过程"
+        },
+        "body": {
+          "en": "MTPScheduler maintains a configured window and pending ToolCallBatch. on_token advances the counter and returns WAIT or FLUSH. The proxy connects this mechanism to a streamed HTTP path; the benchmark also drives it with a synthetic timing model.",
+          "zh": "MTPScheduler 维护配置窗口与待处理 ToolCallBatch；on_token 推进计数，返回 WAIT 或 FLUSH。代理将机制连接到流式 HTTP 链路，基准还可使用合成时间模型驱动它。"
+        },
+        "image": {
+          "light": "/assets/presentation/process-light.svg",
+          "dark": "/assets/presentation/process-dark.svg",
+          "alt": {
+            "en": "Follow the operation",
+            "zh": "处理过程"
+          }
+        }
+      },
+      {
+        "title": {
+          "en": "How MTP-Align works",
+          "zh": "MTP-Align 的工作方式"
+        },
+        "body": {
+          "en": "MTPScheduler maintains a configured window and pending ToolCallBatch. on_token advances the counter and returns WAIT or FLUSH. The proxy connects this mechanism to a streamed HTTP path; the benchmark also drives it with a synthetic timing model.",
+          "zh": "MTPScheduler 维护配置窗口与待处理 ToolCallBatch；on_token 推进计数，返回 WAIT 或 FLUSH。代理将机制连接到流式 HTTP 链路，基准还可使用合成时间模型驱动它。"
+        },
+        "image": {
+          "light": "/assets/presentation/architecture-light.svg",
+          "dark": "/assets/presentation/architecture-dark.svg",
+          "alt": {
+            "en": "How MTP-Align works",
+            "zh": "MTP-Align 的工作方式"
+          }
+        }
+      },
+      {
+        "title": {
+          "en": "Connect the pieces",
+          "zh": "输入与输出"
+        },
+        "body": {
+          "en": "The following routes are implemented in the source. Choose the input that matches your task and keep the resulting artifact with your project.",
+          "zh": "以下路径已有源码实现。按任务选择输入，并把生成的结果与项目一起保存。"
+        },
+        "image": {
+          "light": "/assets/presentation/integrations-light.svg",
+          "dark": "/assets/presentation/integrations-dark.svg",
+          "alt": {
+            "en": "Connect the pieces",
+            "zh": "输入与输出"
+          }
+        }
+      }
+    ],
+    "details": [
+      {
+        "title": {
+          "en": "Configuration",
+          "zh": "配置"
+        },
+        "body": {
+          "en": "MTPConfig defines upstream, listen_port, window_size, flush_policy and max_batch. window_latency_s and tool_overhead_s are synthetic model assumptions. Choose window_boundary or eager to compare scheduling behavior; neither config alone proves a server optimization.",
+          "zh": "MTPConfig 定义 upstream、listen_port、window_size、flush_policy 与 max_batch。window_latency_s 和 tool_overhead_s 是合成模型假设；window_boundary 与 eager 可比较调度行为，但配置本身不证明服务器优化。"
+        }
+      },
+      {
+        "title": {
+          "en": "Further use",
+          "zh": "进一步使用"
+        },
+        "body": {
+          "en": "The CLI exposes the following operations. Commands after the example use your own paths or identifiers.",
+          "zh": "CLI 提供以下操作。示例之外的命令需要替换成你的文件路径或标识。"
+        },
+        "code": "mtp-align bench\n# Experimental proxy, with your own compatible upstream:\nmtp-align serve --upstream http://localhost:8080 --port 8090 --window 4"
+      }
+    ]
+  }
 }

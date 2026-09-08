@@ -1,0 +1,38 @@
+{
+  "mode": "auto",
+  "id": "bd56e6-e76ac8-c6acf6-ec25e87286c3",
+  "identity": "https://github.com/supermarioyl/mtp-align",
+  "primary": "#bd56e6",
+  "secondary": "#e76ac8",
+  "highlight": "#c6acf6",
+  "dark": {
+    "bg": "#090712",
+    "panel": "#11101f",
+    "code": "#110d1d",
+    "ink": "#f4eefd",
+    "muted": "#aa9cc4",
+    "line": "#311841",
+    "primary": "#bd56e6",
+    "secondary": "#e76ac8",
+    "highlight": "#c6acf6",
+    "accent": "#bd56e6",
+    "buttonStart": "#aa4dce",
+    "buttonEnd": "#b4539c",
+    "buttonText": "#ffffff"
+  },
+  "light": {
+    "bg": "#fdf9fe",
+    "panel": "#fcf7fe",
+    "code": "#faf3fd",
+    "ink": "#211630",
+    "muted": "#6a5e88",
+    "line": "#ebcbf7",
+    "primary": "#a149c5",
+    "secondary": "#ab4f94",
+    "highlight": "#796997",
+    "accent": "#a149c5",
+    "buttonStart": "#aa4dce",
+    "buttonEnd": "#b4539c",
+    "buttonText": "#ffffff"
+  }
+}

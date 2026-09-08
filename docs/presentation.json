@@ -1,0 +1,78 @@
+{
+  "name": "mtp-align",
+  "tagline": "Explore tool-call buffering at explicit window boundaries.",
+  "architecture": {
+    "title": "How MTP-Align works",
+    "nodes": [
+      {
+        "title": "Token events",
+        "detail": "Explicit scheduler input"
+      },
+      {
+        "title": "MTP window",
+        "detail": "mtp_align/scheduler.py"
+      },
+      {
+        "title": "Queued tool batch",
+        "detail": "Pending calls and horizon"
+      },
+      {
+        "title": "Flush decision",
+        "detail": "WAIT or FLUSH"
+      }
+    ],
+    "edges": [
+      [
+        0,
+        1
+      ],
+      [
+        1,
+        2
+      ],
+      [
+        2,
+        3
+      ]
+    ]
+  },
+  "process": {
+    "title": "From input to a useful result",
+    "steps": [
+      {
+        "title": "Queue call",
+        "detail": "lookup remains pending"
+      },
+      {
+        "title": "Advance window",
+        "detail": "Three WAIT decisions"
+      },
+      {
+        "title": "Reach boundary",
+        "detail": "FLUSH at the fourth event"
+      }
+    ],
+    "result": "The tool call remains buffered for three events and flushes on the fourth."
+  },
+  "integrations": {
+    "title": "Supported input and output routes",
+    "items": [
+      {
+        "title": "Python state machine",
+        "detail": "Direct scheduling API"
+      },
+      {
+        "title": "SSE proxy scaffold",
+        "detail": "Chat-completions forwarding"
+      },
+      {
+        "title": "Config",
+        "detail": "Window, batch and flush policy"
+      },
+      {
+        "title": "Synthetic benchmark",
+        "detail": "Timing-model exploration"
+      }
+    ]
+  }
+}
