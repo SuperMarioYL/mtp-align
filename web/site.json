@@ -211,5 +211,6 @@
         "code": "mtp-align bench\n# Experimental proxy, with your own compatible upstream:\nmtp-align serve --upstream http://localhost:8080 --port 8090 --window 4"
       }
     ]
-  }
+  },
+  "content_version": "v0.1.0"
 }
