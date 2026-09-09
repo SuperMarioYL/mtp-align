@@ -24,7 +24,7 @@ from fastapi.responses import StreamingResponse, JSONResponse
 
 from .config import MTPConfig
 from .metrics import MetricsCollector
-from .scheduler import FlushDecision, MTPScheduler
+from .scheduler import FlushDecision, MTPScheduler, ToolCall
 
 
 def create_app(config: MTPConfig | None = None) -> FastAPI:
@@ -65,6 +65,8 @@ def create_app(config: MTPConfig | None = None) -> FastAPI:
         upstream = cfg.upstream
         scheduler: MTPScheduler = app.state.scheduler
         metrics: MetricsCollector = app.state.metrics
+        # each request is an independent decode stream starting at offset 0
+        scheduler.reset()
         metrics.reset()
 
         async def stream_and_align() -> AsyncIterator[bytes]:
@@ -82,25 +84,26 @@ def create_app(config: MTPConfig | None = None) -> FastAPI:
                     async for line in resp.aiter_lines():
                         if not line:
                             continue
-                        out, is_tool, decision = _inspect_line(line, scheduler)
+                        # end-of-stream is itself a flush point: drain before [DONE]
+                        is_done = line.startswith("data:") and line[5:].strip() == "[DONE]"
+                        out, is_tool, decision = _inspect_line(line, scheduler, metrics)
+                        flush_now = decision is FlushDecision.FLUSH or is_done
                         if is_tool and cfg.flush_policy == "window_boundary":
                             # defer this tool-call chunk to the next boundary
                             tool_buffer.append(out)
-                            if decision is FlushDecision.FLUSH:
-                                for buffered in tool_buffer:
-                                    yield buffered.encode()
-                                tool_buffer.clear()
+                            if flush_now:
+                                for chunk in _drain(tool_buffer, scheduler):
+                                    yield chunk
                             continue
-                        # forward content/role chunks immediately; check for flush
-                        if decision is FlushDecision.FLUSH and tool_buffer:
-                            for buffered in tool_buffer:
-                                yield buffered.encode()
-                            tool_buffer.clear()
+                        # forward content/role chunks immediately; flush buffered tool calls
+                        if flush_now and tool_buffer:
+                            for chunk in _drain(tool_buffer, scheduler):
+                                yield chunk
                         if out:
                             yield out.encode()
-                    # drain anything still buffered at end-of-stream
-                    for buffered in tool_buffer:
-                        yield buffered.encode()
+                    # drain anything still buffered if the stream ended without [DONE]
+                    for chunk in _drain(tool_buffer, scheduler):
+                        yield chunk
 
         return StreamingResponse(
             stream_and_align(),
@@ -124,40 +127,80 @@ def create_app(config: MTPConfig | None = None) -> FastAPI:
     return app
 
 
-def _inspect_line(line: str, scheduler: MTPScheduler) -> tuple[str, bool, FlushDecision]:
+def _frame(line: str) -> str:
+    """Re-frame one upstream SSE line for the downstream stream.
+
+    ``aiter_lines`` strips terminators and blank separator lines, so the frame
+    must be rebuilt: a ``data:`` line is a complete SSE event and needs the
+    trailing blank line strict parsers (e.g. the OpenAI SDK) dispatch on;
+    other lines (``event:``, comments) keep a single newline so they stay
+    attached to the data line that ends their event.
+    """
+    if line.startswith("data:"):
+        return line + "\n\n"
+    return line + "\n"
+
+
+def _drain(tool_buffer: list[str], scheduler: MTPScheduler) -> list[bytes]:
+    """Release queued tool-call chunks and clear the scheduler batch."""
+    scheduler.flush()
+    chunks = [chunk.encode() for chunk in tool_buffer]
+    tool_buffer.clear()
+    return chunks
+
+
+def _inspect_line(
+    line: str, scheduler: MTPScheduler, metrics: MetricsCollector
+) -> tuple[str, bool, FlushDecision]:
     """Inspect one upstream SSE line; advance the window and detect tool calls.
 
     Returns ``(outgoing_line, is_tool_call, flush_decision)``. Decoded tokens
-    advance the MTP window; tool-call deltas are flagged for boundary flush.
+    advance the MTP window and the metrics collector; tool-call deltas are
+    queued with the scheduler (under ``window_boundary`` policy) so the next
+    window boundary triggers a flush. The flush decision is propagated from
+    every line, including content-only lines that cross a boundary.
     """
-    out = line if line.endswith("\n") else line + "\n"
+    out = _frame(line)
     if not line.startswith("data:"):
         return out, False, FlushDecision.WAIT
     data = line[5:].strip()
     if data == "[DONE]":
         return out, False, FlushDecision.WAIT
     is_tool = False
+    decision = FlushDecision.WAIT
     try:
         payload = json.loads(data)
         choices = payload.get("choices") or []
         for choice in choices:
             delta = choice.get("delta") or {}
-            if delta.get("tool_calls"):
+            tool_calls = delta.get("tool_calls")
+            if tool_calls:
                 is_tool = True
+                if scheduler.flush_policy == "window_boundary":
+                    # register pendingness so the next boundary triggers a flush
+                    for tc in tool_calls:
+                        fn = tc.get("function") or {}
+                        scheduler.queue_tool_call(
+                            ToolCall(
+                                id=int(tc.get("index") or 0),
+                                name=str(fn.get("name", "")),
+                            )
+                        )
             content = delta.get("content")
             if isinstance(content, str) and content:
                 for _ in content:
                     # one token per non-empty content chunk (coarse; m2 refines)
-                    decision = scheduler.on_token()
-                    if decision is FlushDecision.FLUSH and is_tool:
-                        return out, True, decision
-                # if no content tokens but a tool call, still advance once
-                if is_tool and not content:
-                    decision = scheduler.on_token()
-                    return out, True, decision
+                    if scheduler.on_token() is FlushDecision.FLUSH:
+                        decision = FlushDecision.FLUSH
+                    metrics.on_token()
+            elif is_tool:
+                # a tool-call chunk without content still advances the window once
+                if scheduler.on_token() is FlushDecision.FLUSH:
+                    decision = FlushDecision.FLUSH
+                metrics.on_token()
     except json.JSONDecodeError:
         pass
-    return out, is_tool, FlushDecision.WAIT
+    return out, is_tool, decision
 
 
 def _sse_error(status: int, body: bytes) -> bytes:

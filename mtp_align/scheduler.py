@@ -127,6 +127,22 @@ class MTPScheduler:
 
     # -- mutations --------------------------------------------------------
 
+    def reset(self) -> None:
+        """Restore the scheduler to a fresh decode stream.
+
+        Each proxied completion is an independent decode starting at offset 0;
+        the proxy calls this per request so window alignment does not drift
+        between requests.
+        """
+        self.window = MTPWindow(
+            size=self.window_size, remaining=self.window_size, horizon=self.window_size
+        )
+        self.batch = ToolCallBatch(pending=[], flush_horizon=self.window_size)
+        self._tokens_seen = 0
+        self._windows_completed = 0
+        self._interrupts = []
+        self._boundary_flushes = 0
+
     def queue_tool_call(self, call: ToolCall) -> None:
         """Buffer a tool call for a future flush."""
         self.batch.pending.append(call)
