@@ -22,6 +22,7 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 
+from . import __version__
 from .config import MTPConfig
 from .metrics import MetricsCollector
 from .scheduler import FlushDecision, MTPScheduler, ToolCall
@@ -30,7 +31,7 @@ from .scheduler import FlushDecision, MTPScheduler, ToolCall
 def create_app(config: MTPConfig | None = None) -> FastAPI:
     """Build the MTP-Align proxy FastAPI application."""
     cfg = config or MTPConfig()
-    app = FastAPI(title="MTP-Align", version="0.1.0")
+    app = FastAPI(title="MTP-Align", version=__version__)
     app.state.config = cfg
     app.state.scheduler = MTPScheduler(
         window_size=cfg.window_size,
@@ -108,7 +109,7 @@ def create_app(config: MTPConfig | None = None) -> FastAPI:
         return StreamingResponse(
             stream_and_align(),
             media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-MTP-Align": "0.1.0"},
+            headers={"Cache-Control": "no-cache", "X-MTP-Align": __version__},
         )
 
     @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
