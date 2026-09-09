@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from typing import Any
 
 import typer
 from rich.console import Console
@@ -32,6 +33,15 @@ app = typer.Typer(
 )
 console = Console(stderr=False)
 err_console = Console(stderr=True)
+
+
+def _build_config(**kwargs: Any) -> MTPConfig:
+    """Build an MTPConfig, turning validation errors into a clean CLI error."""
+    try:
+        return MTPConfig(**kwargs)
+    except ValueError as exc:
+        err_console.print(f"[red]error:[/red] {exc}")
+        raise typer.Exit(code=2) from exc
 
 
 def _version_callback(value: bool) -> None:
@@ -67,7 +77,7 @@ def bench(
     warmup: int = typer.Option(32, "--warmup", help="Warmup tokens discarded before timing."),
 ) -> None:
     """Run the before/after tps benchmark and print a falsifiable delta table."""
-    cfg = MTPConfig(
+    cfg = _build_config(
         upstream=upstream or "http://localhost:8080",
         window_size=window,
         benchmark_tokens=tokens,
@@ -147,7 +157,7 @@ def serve(
     ),
 ) -> None:
     """Start the MTP-aware proxy. Point your agent at http://<host>:<port>/v1."""
-    cfg = MTPConfig(
+    cfg = _build_config(
         upstream=upstream,
         listen_host=host,
         listen_port=port,
@@ -158,7 +168,7 @@ def serve(
         import uvicorn
         from .proxy import create_app
     except ImportError as exc:  # pragma: no cover - fastapi/uvicorn are key deps
-        err_console.print(f"[red]missing dependency:[/red] {exc.name}. Run `pip install mtp-align[serve]`.")
+        err_console.print(f"[red]missing dependency:[/red] {exc.name}. Run `pip install mtp-align`.")
         raise typer.Exit(code=1)
 
     err_console.print(f"[bold]mtp-align serve[/bold]  upstream={upstream}  window={window}")
