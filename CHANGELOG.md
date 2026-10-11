@@ -4,6 +4,43 @@ All notable changes to MTP-Align are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [semantic versioning](https://semver.org/).
 
+## [0.3.0] - 2026-10-12
+
+### Fixed
+
+- **Release: artifacts are now attached to the GitHub release.** The release
+  workflow built the wheel, sdist, and checksums but uploaded them only as a
+  CI artifact — the v0.2.0 release page shipped with zero downloadable
+  assets. A release-attach step now publishes `dist/*` on every tag push.
+- **Proxy: malformed request bodies answer 400, not 500.** A request body
+  that is not valid JSON raised a raw `JSONDecodeError` that surfaced as a
+  500 with a traceback. The proxy now returns a plain 400 with an
+  OpenAI-style JSON error body before the stream starts.
+- **Proxy: the passthrough forwards upstream responses verbatim.** The
+  non-chat path re-serialized every response through `resp.json()`, which
+  500'd on non-JSON upstream bodies (plain-text load errors, HTML error
+  pages) and discarded the upstream content type. It now forwards the
+  upstream bytes, status, and content-type unchanged.
+- **Proxy: one final metrics summary per request.** `MetricsCollector.final()`
+  was never called at stream end, so completions shorter than the metrics
+  interval (default 0.5 s) logged no tps/continuity line at all. The stream
+  epilogue now emits exactly one forced summary line.
+
+### Changed
+
+- `/health` now reports the pending tool-call batch (`pending_count`,
+  `pending_tool_calls`), making the README's "pending calls are inspectable"
+  claim concretely true; stale v0.1 docstrings in `mtp_align/__init__.py`
+  and `mtp_align/cli.py` were refreshed.
+- Version surfaces bumped in lockstep to 0.3.0: `VERSION`, `pyproject.toml`,
+  `mtp_align.__version__`, and `web/site.json` `content_version`.
+
+### Added
+
+- `tests/test_release_assets.py` guards the release-attach step, and new
+  proxy tests cover the 400 error path, verbatim passthrough, the final
+  metrics line, and `/health` pending-batch visibility.
+
 ## [0.2.0] - 2026-09-10
 
 ### Fixed

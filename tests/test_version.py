@@ -13,7 +13,7 @@ from mtp_align import __version__, proxy as proxy_mod
 from mtp_align.cli import app as cli_app
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-EXPECTED = "0.2.0"
+EXPECTED = "0.3.0"
 
 
 def test_version_file_matches():

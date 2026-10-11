@@ -20,7 +20,7 @@ from typing import Any, AsyncIterator
 
 import httpx
 from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, JSONResponse, Response
 
 from . import __version__
 from .config import MTPConfig
@@ -54,15 +54,30 @@ def create_app(config: MTPConfig | None = None) -> FastAPI:
             "tokens_seen": s.tokens_seen(),
             "windows_completed": s.windows_completed(),
             "continuity_pct": s.continuity_pct(),
+            "pending_count": len(s.batch.pending),
+            "pending_tool_calls": [call.name for call in s.batch.pending],
         }
 
     @app.api_route(
         "/v1/chat/completions",
         methods=["POST"],
     )
-    async def chat_completions(request: Request) -> StreamingResponse:
+    async def chat_completions(request: Request) -> Response:
         """Proxy a streaming chat completion with MTP-aware tool-call flushing."""
-        body = await request.json()
+        try:
+            body = await request.json()
+        except ValueError:
+            # malformed request body: answer before the stream starts, as
+            # OpenAI-compatible servers do (plain 400, JSON error body)
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": {
+                        "message": "Invalid JSON in request body.",
+                        "type": "invalid_request_error",
+                    }
+                },
+            )
         upstream = cfg.upstream
         scheduler: MTPScheduler = app.state.scheduler
         metrics: MetricsCollector = app.state.metrics
@@ -72,39 +87,44 @@ def create_app(config: MTPConfig | None = None) -> FastAPI:
 
         async def stream_and_align() -> AsyncIterator[bytes]:
             tool_buffer: list[str] = []  # buffered tool-call SSE chunks (aligned)
-            async with httpx.AsyncClient(timeout=None) as client:
-                async with client.stream(
-                    "POST",
-                    f"{upstream}/v1/chat/completions",
-                    json=body,
-                ) as resp:
-                    if resp.status_code >= 400:
-                        text = await resp.aread()
-                        yield _sse_error(resp.status_code, text)
-                        return
-                    async for line in resp.aiter_lines():
-                        if not line:
-                            continue
-                        # end-of-stream is itself a flush point: drain before [DONE]
-                        is_done = line.startswith("data:") and line[5:].strip() == "[DONE]"
-                        out, is_tool, decision = _inspect_line(line, scheduler, metrics)
-                        flush_now = decision is FlushDecision.FLUSH or is_done
-                        if is_tool and cfg.flush_policy == "window_boundary":
-                            # defer this tool-call chunk to the next boundary
-                            tool_buffer.append(out)
-                            if flush_now:
+            try:
+                async with httpx.AsyncClient(timeout=None) as client:
+                    async with client.stream(
+                        "POST",
+                        f"{upstream}/v1/chat/completions",
+                        json=body,
+                    ) as resp:
+                        if resp.status_code >= 400:
+                            text = await resp.aread()
+                            yield _sse_error(resp.status_code, text)
+                            return
+                        async for line in resp.aiter_lines():
+                            if not line:
+                                continue
+                            # end-of-stream is itself a flush point: drain before [DONE]
+                            is_done = line.startswith("data:") and line[5:].strip() == "[DONE]"
+                            out, is_tool, decision = _inspect_line(line, scheduler, metrics)
+                            flush_now = decision is FlushDecision.FLUSH or is_done
+                            if is_tool and cfg.flush_policy == "window_boundary":
+                                # defer this tool-call chunk to the next boundary
+                                tool_buffer.append(out)
+                                if flush_now:
+                                    for chunk in _drain(tool_buffer, scheduler):
+                                        yield chunk
+                                continue
+                            # forward content/role chunks immediately; flush buffered tool calls
+                            if flush_now and tool_buffer:
                                 for chunk in _drain(tool_buffer, scheduler):
                                     yield chunk
-                            continue
-                        # forward content/role chunks immediately; flush buffered tool calls
-                        if flush_now and tool_buffer:
-                            for chunk in _drain(tool_buffer, scheduler):
-                                yield chunk
-                        if out:
-                            yield out.encode()
-                    # drain anything still buffered if the stream ended without [DONE]
-                    for chunk in _drain(tool_buffer, scheduler):
-                        yield chunk
+                            if out:
+                                yield out.encode()
+                        # drain anything still buffered if the stream ended without [DONE]
+                        for chunk in _drain(tool_buffer, scheduler):
+                            yield chunk
+            finally:
+                # one forced summary line per request, even when the whole
+                # completion finishes inside a single metrics interval
+                metrics.final()
 
         return StreamingResponse(
             stream_and_align(),
@@ -113,7 +133,7 @@ def create_app(config: MTPConfig | None = None) -> FastAPI:
         )
 
     @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
-    async def passthrough(path: str, request: Request) -> JSONResponse:
+    async def passthrough(path: str, request: Request) -> Response:
         """Transparent passthrough for non-chat endpoints (e.g. /v1/models)."""
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.request(
@@ -123,7 +143,14 @@ def create_app(config: MTPConfig | None = None) -> FastAPI:
                 headers={k: v for k, v in request.headers.items() if k.lower() != "host"},
                 params=request.query_params,
             )
-            return JSONResponse(content=resp.json(), status_code=resp.status_code)
+            # forward the upstream bytes, status, and content-type verbatim —
+            # re-serializing JSON would 500 on non-JSON bodies (load-time
+            # plain-text errors, HTML from a reverse proxy) and lose fidelity
+            return Response(
+                content=resp.content,
+                status_code=resp.status_code,
+                media_type=resp.headers.get("content-type"),
+            )
 
     return app
 

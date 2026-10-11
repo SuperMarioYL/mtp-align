@@ -1,6 +1,6 @@
 """The MTP-Align command-line interface (Typer).
 
-Two commands ship the v0.1 value:
+Two commands ship the core value:
 
 * ``mtp-align bench`` — runs the kill-gate benchmark and prints a before/after
   tps table. Defaults to the synthetic mock (no GPU needed); pass

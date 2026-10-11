@@ -1,4 +1,5 @@
-"""SSE-level tests for the proxy streaming path (v0.2.0 boundary-flush fixes).
+"""SSE-level tests for the proxy streaming path (v0.2.0 boundary-flush fixes
+plus the v0.3.0 request error paths, passthrough fidelity, and metrics epilogue).
 
 Drives ``create_app`` through ``httpx.ASGITransport`` against a scripted fake
 upstream, verifying at the wire level that tool-call chunks flush at MTP
@@ -8,6 +9,11 @@ stream is spec-conformant SSE, and that scheduler state resets per request.
 
 from __future__ import annotations
 
+import asyncio
+import io
+from typing import Any
+
+import httpx
 import pytest
 
 from mtp_align import proxy as proxy_mod
@@ -130,3 +136,141 @@ async def test_metrics_collector_is_driven_by_decoded_tokens(monkeypatch):
     ]
     await post_completion(app, monkeypatch, lines)
     assert app.state.metrics.sample().tokens == 6
+
+
+# --- v0.3.0: request error paths, passthrough fidelity, metrics epilogue ---
+
+
+class _UpstreamResp:
+    """Minimal stand-in for an httpx.Response in the passthrough path."""
+
+    def __init__(self, status_code: int, content: bytes, headers: dict):
+        self.status_code = status_code
+        self.content = content
+        self.headers = headers
+
+
+class _PassthroughClient:
+    """Client shim whose non-stream request() returns a scripted response."""
+
+    def __init__(self, resp: _UpstreamResp) -> None:
+        self._resp = resp
+
+    async def __aenter__(self) -> "_PassthroughClient":
+        return self
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+    async def request(self, method: str, url: str, content=None, headers=None, params=None):
+        return self._resp
+
+
+class _PassthroughShim:
+    def __init__(self, resp: _UpstreamResp) -> None:
+        self.AsyncClient = lambda **kwargs: _PassthroughClient(resp)  # noqa: E731
+
+
+async def test_malformed_request_body_returns_400_not_500(monkeypatch):
+    """A non-JSON request body answers a plain 400, not a raw 500 traceback."""
+    app = proxy_mod.create_app(make_config())
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        resp = await client.post(
+            "/v1/chat/completions",
+            content=b"{not json",
+            headers={"content-type": "application/json"},
+        )
+    assert resp.status_code == 400
+    assert "error" in resp.json()
+
+
+async def test_passthrough_forwards_non_json_upstream_response_verbatim(monkeypatch):
+    """Non-JSON upstream bodies pass through with status and content-type kept."""
+    app = proxy_mod.create_app(make_config())
+    upstream = _UpstreamResp(
+        503, b"model loading, try again", {"content-type": "text/plain"}
+    )
+    monkeypatch.setattr(proxy_mod, "httpx", _PassthroughShim(upstream))
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        resp = await client.get("/v1/models")
+    assert resp.status_code == 503
+    assert resp.text == "model loading, try again"
+    assert resp.headers["content-type"].startswith("text/plain")
+
+
+async def test_final_metrics_line_always_emitted(monkeypatch):
+    """Even a completion inside one metrics interval logs one summary line."""
+    app = proxy_mod.create_app(make_config())
+    stream = io.StringIO()
+    app.state.metrics.stream = stream
+    await post_completion(app, monkeypatch, [sse_line({"content": "ab"}), "data: [DONE]"])
+    assert "tokens=" in stream.getvalue()
+
+
+class _PausingStreamCtx:
+    """Stream shim that pauses after queueing a tool call, mid-window."""
+
+    status_code = 200
+    reached: asyncio.Event
+    release: asyncio.Event
+
+    async def __aenter__(self) -> "_PausingStreamCtx":
+        return self
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+    async def aread(self) -> bytes:
+        return b""
+
+    async def aiter_lines(self):
+        yield sse_line({"content": "ab"})  # tokens 1-2
+        yield tool_call_line()             # queued mid window 2
+        self.reached.set()
+        await self.release.wait()
+        yield "data: [DONE]"
+
+
+class _PausingClientCtx:
+    def __init__(self) -> None:
+        self._ctx = _PausingStreamCtx()
+
+    async def __aenter__(self) -> "_PausingClientCtx":
+        return self
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+    def stream(self, method: str, url: str, json: Any = None) -> _PausingStreamCtx:
+        return self._ctx
+
+
+async def test_health_reports_pending_batch_midstream(monkeypatch):
+    """/health exposes the deferred batch while a stream holds it mid-window."""
+    app = proxy_mod.create_app(make_config())
+    _PausingStreamCtx.reached = asyncio.Event()
+    _PausingStreamCtx.release = asyncio.Event()
+
+    class _Shim:
+        def __init__(self) -> None:
+            self.AsyncClient = lambda **kwargs: _PausingClientCtx()  # noqa: E731
+
+    monkeypatch.setattr(proxy_mod, "httpx", _Shim())
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        task = asyncio.create_task(
+            client.post("/v1/chat/completions", json={"model": "m", "messages": []})
+        )
+        await asyncio.wait_for(_PausingStreamCtx.reached.wait(), timeout=5)
+        health = (await client.get("/health")).json()
+        assert health["pending_count"] == 1
+        assert health["pending_tool_calls"] == ["search"]
+        _PausingStreamCtx.release.set()
+        resp = await asyncio.wait_for(task, timeout=5)
+        assert resp.status_code == 200
+        # the end-of-stream drain releases the batch: /health is empty again
+        health = (await client.get("/health")).json()
+        assert health["pending_count"] == 0
+        assert health["pending_tool_calls"] == []

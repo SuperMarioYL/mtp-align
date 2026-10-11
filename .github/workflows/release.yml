@@ -28,6 +28,10 @@ jobs:
         with:
           name: dist
           path: dist/*
+      - name: Attach artifacts to the GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
 
   # Opt-in PyPI publishing. A fresh repo has no Trusted Publisher registered, so an
   # always-on job would fail the FIRST release with `invalid-publisher`. Set the
