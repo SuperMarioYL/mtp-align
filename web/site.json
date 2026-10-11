@@ -112,8 +112,8 @@
       "zh": "尚未建立 GPU 吞吐收益证据；合成基准使用假设时间与中断成本。"
     },
     {
-      "en": "The proxy is experimental; request isolation, partial tool-call reconstruction and production backpressure require further validation.",
-      "zh": "代理属于实验实现；请求隔离、工具调用分片拼装与生产背压需要进一步验证。"
+      "en": "The proxy is experimental; mid-stream backpressure and cross-delta tool-call argument reconstruction still need real-workload validation. v0.3.0 hardened the request error paths: malformed bodies answer 400, and non-JSON upstream responses pass through verbatim.",
+      "zh": "代理属于实验实现；流内背压与跨分片工具调用参数拼装仍需真实负载验证。v0.3.0 已加固请求错误路径：畸形请求返回 400，非 JSON 上游响应原样透传。"
     }
   ],
   "scene": {
