@@ -37,6 +37,19 @@ def test_max_batch_forces_early_flush_mid_window():
     assert sched.flush() == [ToolCall(id=1, name="a", args={}), ToolCall(id=2, name="b", args={})]
 
 
+def test_queue_tool_call_coalesces_fragments_of_one_call():
+    """Deltas sharing one id are one call, so a fragment flood cannot fill the batch."""
+    sched = MTPScheduler(window_size=16, max_batch=8)
+    sched.queue_tool_call(ToolCall(id=0, name="search", args={}))
+    for _ in range(9):
+        # later deltas carry arguments only — no name
+        sched.queue_tool_call(ToolCall(id=0, name="", args={}))
+    assert len(sched.batch.pending) == 1
+    assert sched.batch.pending[0].name == "search"
+    # one pending call is far below max_batch: the window boundary decides
+    assert sched.on_token() is FlushDecision.WAIT
+
+
 def test_eager_policy_flushes_past_first_token():
     """Eager mode flushes a non-empty batch once past the first token."""
     sched = MTPScheduler(window_size=4, flush_policy="eager")

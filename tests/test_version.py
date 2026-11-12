@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import tomllib
 from pathlib import Path
 
@@ -13,7 +14,8 @@ from mtp_align import __version__, proxy as proxy_mod
 from mtp_align.cli import app as cli_app
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-EXPECTED = "0.3.0"
+EXPECTED = "0.4.0"
+CHANGELOG_HEADING = re.compile(r"^## \[(\d+\.\d+\.\d+)\]")
 
 
 def test_version_file_matches():
@@ -32,7 +34,19 @@ def test_dunder_version_matches():
 def test_cli_version_flag_matches():
     result = CliRunner().invoke(cli_app, ["--version"])
     assert result.exit_code == 0
-    assert EXPECTED in result.output
+    # exact output, not "contains": a drifted prefix or suffix must fail
+    assert result.output.strip() == f"mtp-align {EXPECTED}"
+
+
+def test_changelog_head_matches():
+    """The newest CHANGELOG section must BE this version, not merely mention one."""
+    headings = [
+        match.group(1)
+        for line in (REPO_ROOT / "CHANGELOG.md").read_text().splitlines()
+        if (match := CHANGELOG_HEADING.match(line))
+    ]
+    assert headings, "CHANGELOG.md has no [x.y.z] section heading"
+    assert headings[0] == EXPECTED
 
 
 def test_fastapi_app_version_matches():

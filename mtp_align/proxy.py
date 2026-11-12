@@ -21,6 +21,7 @@ from typing import Any, AsyncIterator
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse, JSONResponse, Response
+from httpx import HTTPError
 
 from . import __version__
 from .config import MTPConfig
@@ -88,39 +89,45 @@ def create_app(config: MTPConfig | None = None) -> FastAPI:
         async def stream_and_align() -> AsyncIterator[bytes]:
             tool_buffer: list[str] = []  # buffered tool-call SSE chunks (aligned)
             try:
-                async with httpx.AsyncClient(timeout=None) as client:
-                    async with client.stream(
-                        "POST",
-                        f"{upstream}/v1/chat/completions",
-                        json=body,
-                    ) as resp:
-                        if resp.status_code >= 400:
-                            text = await resp.aread()
-                            yield _sse_error(resp.status_code, text)
-                            return
-                        async for line in resp.aiter_lines():
-                            if not line:
-                                continue
-                            # end-of-stream is itself a flush point: drain before [DONE]
-                            is_done = line.startswith("data:") and line[5:].strip() == "[DONE]"
-                            out, is_tool, decision = _inspect_line(line, scheduler, metrics)
-                            flush_now = decision is FlushDecision.FLUSH or is_done
-                            if is_tool and cfg.flush_policy == "window_boundary":
-                                # defer this tool-call chunk to the next boundary
-                                tool_buffer.append(out)
-                                if flush_now:
+                try:
+                    async with httpx.AsyncClient(timeout=None) as client:
+                        async with client.stream(
+                            "POST",
+                            f"{upstream}/v1/chat/completions",
+                            json=body,
+                        ) as resp:
+                            if resp.status_code >= 400:
+                                text = await resp.aread()
+                                yield _sse_error(resp.status_code, text)
+                                return
+                            async for line in resp.aiter_lines():
+                                if not line:
+                                    continue
+                                # end-of-stream is itself a flush point: drain before [DONE]
+                                is_done = line.startswith("data:") and line[5:].strip() == "[DONE]"
+                                out, is_tool, decision = _inspect_line(line, scheduler, metrics)
+                                flush_now = decision is FlushDecision.FLUSH or is_done
+                                if is_tool and cfg.flush_policy == "window_boundary":
+                                    # defer this tool-call chunk to the next boundary
+                                    tool_buffer.append(out)
+                                    if flush_now:
+                                        for chunk in _drain(tool_buffer, scheduler):
+                                            yield chunk
+                                    continue
+                                # forward content/role chunks immediately; flush buffered tool calls
+                                if flush_now and tool_buffer:
                                     for chunk in _drain(tool_buffer, scheduler):
                                         yield chunk
-                                continue
-                            # forward content/role chunks immediately; flush buffered tool calls
-                            if flush_now and tool_buffer:
-                                for chunk in _drain(tool_buffer, scheduler):
-                                    yield chunk
-                            if out:
-                                yield out.encode()
-                        # drain anything still buffered if the stream ended without [DONE]
-                        for chunk in _drain(tool_buffer, scheduler):
-                            yield chunk
+                                if out:
+                                    yield out.encode()
+                            # drain anything still buffered if the stream ended without [DONE]
+                            for chunk in _drain(tool_buffer, scheduler):
+                                yield chunk
+                except HTTPError as exc:
+                    # the upstream never accepted the stream, or broke mid-body:
+                    # answer with one parseable SSE error event instead of letting
+                    # the exception escape a response whose 200 headers are gone
+                    yield _sse_error(502, f"upstream request failed: {exc}".encode())
             finally:
                 # one forced summary line per request, even when the whole
                 # completion finishes inside a single metrics interval

@@ -133,6 +133,8 @@ class MockEngine:
     This is a *model-based upper bound* — it makes the harness runnable without
     a GPU and exercises the scheduler end-to-end. It is NOT a measurement; the
     real kill-gate is :class:`HttpEngine` against a live llama.cpp server.
+    ``benchmark_warmup`` tokens are decoded outside the timed region in both
+    arms.
     """
 
     def __init__(self, config: MTPConfig) -> None:
@@ -141,14 +143,19 @@ class MockEngine:
     async def run(self, workload: Workload, mode: str) -> ModeResult:
         cfg = self.config
         w = workload.window_size
+        warmup = cfg.benchmark_warmup
         scheduler = MTPScheduler(
             window_size=w, max_batch=cfg.max_batch, flush_policy="window_boundary"
         )
         tool_set = set(workload.tool_call_offsets)
         waste_windows = 0
+        timed_calls = 0
 
-        for offset in range(1, workload.total_tokens + 1):
+        # The warmup prefix is decoded before timing starts: the scheduled region
+        # begins at the first token after it, with a fresh MTP window there.
+        for offset in range(warmup + 1, workload.total_tokens + 1):
             if offset in tool_set:
+                timed_calls += 1
                 call = ToolCall(id=offset, name=f"tool_{offset}", args={})
                 if mode == "naive":
                     # agent cuts to the tool mid-window → window abandoned
@@ -161,19 +168,17 @@ class MockEngine:
             if decision is FlushDecision.FLUSH:
                 scheduler.flush()
 
-        # wall time: full windows + naive waste windows + tool-call round-trips
-        full_windows = workload.total_tokens // w
+        # wall time: timed full windows + naive waste windows + tool round-trips
+        timed_tokens = workload.total_tokens - warmup
+        full_windows = timed_tokens // w
         passes = full_windows + (waste_windows if mode == "naive" else 0)
-        wall = (
-            passes * cfg.window_latency_s
-            + len(workload.tool_call_offsets) * cfg.tool_overhead_s
-        )
+        wall = passes * cfg.window_latency_s + timed_calls * cfg.tool_overhead_s
         await asyncio.sleep(0)  # cooperative yield; keeps tests fast
 
-        tps = workload.total_tokens / wall if wall > 0 else 0.0
+        tps = timed_tokens / wall if wall > 0 else 0.0
         return ModeResult(
             mode=mode,
-            total_tokens=workload.total_tokens,
+            total_tokens=timed_tokens,
             wall_s=wall,
             tps=tps,
             continuity_pct=scheduler.continuity_pct(),
@@ -208,9 +213,11 @@ class HttpEngine:
     async def run(self, workload: Workload, mode: str) -> ModeResult:
         cfg = self.config
         w = workload.window_size
+        warmup = cfg.benchmark_warmup
         scheduler = MTPScheduler(window_size=w, max_batch=cfg.max_batch)
         total = 0
         wall_start = time.monotonic()
+        timed_start: float | None = None
         tool_offsets = sorted(workload.tool_call_offsets)
         call_idx = 0
         decoded_prefix: list[str] = []
@@ -230,6 +237,9 @@ class HttpEngine:
                 for i in range(delivered):
                     scheduler.on_token(Token(offset=total + i + 1))
                 total += delivered
+                # the clock starts once the warmup prefix has been decoded
+                if timed_start is None and total > warmup:
+                    timed_start = time.monotonic()
                 decoded_prefix.append(chunk)
 
                 if mode == "naive" and call_idx < len(tool_offsets) and total >= tool_offsets[call_idx]:
@@ -251,12 +261,13 @@ class HttpEngine:
                     # drain remaining tokens without further aborts
                     pass
 
-        wall = time.monotonic() - wall_start
+        wall = time.monotonic() - (timed_start if timed_start is not None else wall_start)
+        timed_tokens = max(total - warmup, 0)
         return ModeResult(
             mode=mode,
-            total_tokens=total,
+            total_tokens=timed_tokens,
             wall_s=wall,
-            tps=total / wall if wall > 0 else 0.0,
+            tps=timed_tokens / wall if wall > 0 else 0.0,
             continuity_pct=scheduler.continuity_pct(),
             windows=scheduler.windows_completed(),
             interrupts=len(scheduler._interrupts),  # noqa: SLF001

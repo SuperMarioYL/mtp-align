@@ -9,6 +9,7 @@ arm never interrupts, and the delta is computed and reported.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 
 import pytest
 
@@ -49,7 +50,7 @@ def test_harness_runs_both_modes_and_computes_delta(cfg: MTPConfig):
     naive, aligned = asyncio.run(harness.run())
     assert naive.mode == "naive"
     assert aligned.mode == "aligned"
-    assert naive.total_tokens == aligned.total_tokens == cfg.benchmark_tokens
+    assert naive.total_tokens == aligned.total_tokens == cfg.benchmark_tokens - cfg.benchmark_warmup
     # continuity: aligned never interrupts → 100%; naive has interrupts → < 100%
     assert aligned.continuity_pct == 100.0
     assert aligned.interrupts == 0
@@ -92,3 +93,22 @@ def test_zero_tool_calls_means_no_delta() -> None:
     assert aligned.interrupts == 0
     assert aligned.delta_pct is not None
     assert abs(aligned.delta_pct) < 1e-6
+
+
+def test_warmup_prefix_is_decoded_outside_the_timed_region(cfg: MTPConfig):
+    """--warmup tokens are discarded before timing, so they are not measured."""
+    workload = build_workload(cfg)
+    cold = asyncio.run(MockEngine(replace(cfg, benchmark_warmup=0)).run(workload, "aligned"))
+    warm = asyncio.run(MockEngine(replace(cfg, benchmark_warmup=64)).run(workload, "aligned"))
+    assert cold.total_tokens == cfg.benchmark_tokens
+    assert warm.total_tokens == cfg.benchmark_tokens - 64
+    # the warmup region's forward passes are not timed
+    assert warm.wall_s < cold.wall_s
+    assert warm.tps > 0.0
+
+
+def test_negative_benchmark_inputs_are_rejected():
+    with pytest.raises(ValueError, match="benchmark_warmup must be >= 0"):
+        MTPConfig(benchmark_warmup=-1)
+    with pytest.raises(ValueError, match="benchmark_tool_calls must be >= 0"):
+        MTPConfig(benchmark_tool_calls=-1)

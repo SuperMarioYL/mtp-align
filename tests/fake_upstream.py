@@ -24,7 +24,7 @@ def sse_line(delta: dict[str, Any]) -> str:
 
 
 def tool_call_line(name: str = "search") -> str:
-    """One SSE data frame carrying a tool-call delta."""
+    """One SSE data frame carrying a complete tool-call delta."""
     return sse_line(
         {
             "tool_calls": [
@@ -36,6 +36,18 @@ def tool_call_line(name: str = "search") -> str:
             ]
         }
     )
+
+
+def tool_call_fragment(args: str, name: str | None = None, index: int = 0) -> str:
+    """One SSE data frame carrying an argument fragment of a streamed tool call.
+
+    A real tool call arrives as several deltas sharing one ``index``; the
+    function name appears only in the first.
+    """
+    function: dict[str, Any] = {"arguments": args}
+    if name is not None:
+        function["name"] = name
+    return sse_line({"tool_calls": [{"index": index, "function": function}]})
 
 
 class _StreamCtx:

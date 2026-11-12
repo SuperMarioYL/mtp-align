@@ -17,7 +17,13 @@ import httpx
 import pytest
 
 from mtp_align import proxy as proxy_mod
-from fake_upstream import make_config, post_completion, sse_line, tool_call_line
+from fake_upstream import (
+    make_config,
+    post_completion,
+    sse_line,
+    tool_call_fragment,
+    tool_call_line,
+)
 
 
 def _data_lines(body: str) -> list[str]:
@@ -210,9 +216,10 @@ async def test_final_metrics_line_always_emitted(monkeypatch):
 
 
 class _PausingStreamCtx:
-    """Stream shim that pauses after queueing a tool call, mid-window."""
+    """Stream shim that pauses after replaying ``lines``, mid-window."""
 
     status_code = 200
+    lines: list[str] = []
     reached: asyncio.Event
     release: asyncio.Event
 
@@ -226,10 +233,10 @@ class _PausingStreamCtx:
         return b""
 
     async def aiter_lines(self):
-        yield sse_line({"content": "ab"})  # tokens 1-2
-        yield tool_call_line()             # queued mid window 2
-        self.reached.set()
-        await self.release.wait()
+        for line in type(self).lines:
+            yield line
+        type(self).reached.set()
+        await type(self).release.wait()
         yield "data: [DONE]"
 
 
@@ -250,6 +257,10 @@ class _PausingClientCtx:
 async def test_health_reports_pending_batch_midstream(monkeypatch):
     """/health exposes the deferred batch while a stream holds it mid-window."""
     app = proxy_mod.create_app(make_config())
+    _PausingStreamCtx.lines = [
+        sse_line({"content": "ab"}),  # tokens 1-2
+        tool_call_line(),             # queued mid window 2
+    ]
     _PausingStreamCtx.reached = asyncio.Event()
     _PausingStreamCtx.release = asyncio.Event()
 
@@ -274,3 +285,89 @@ async def test_health_reports_pending_batch_midstream(monkeypatch):
         health = (await client.get("/health")).json()
         assert health["pending_count"] == 0
         assert health["pending_tool_calls"] == []
+
+
+# --- v0.4.0: fragmented tool calls and upstream stream failures ---
+
+
+async def test_fragmented_tool_call_is_one_pending_call(monkeypatch):
+    """Three SSE deltas of one call report one pending call with its name."""
+    app = proxy_mod.create_app(make_config(window_size=16))
+    _PausingStreamCtx.lines = [
+        sse_line({"content": "ab"}),
+        tool_call_fragment("", name="search"),   # fragment 1 carries the name
+        tool_call_fragment('{"q":'),             # fragment 2: arguments only
+        tool_call_fragment('"x"}'),              # fragment 3: arguments only
+    ]
+    _PausingStreamCtx.reached = asyncio.Event()
+    _PausingStreamCtx.release = asyncio.Event()
+
+    class _Shim:
+        def __init__(self) -> None:
+            self.AsyncClient = lambda **kwargs: _PausingClientCtx()  # noqa: E731
+
+    monkeypatch.setattr(proxy_mod, "httpx", _Shim())
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        task = asyncio.create_task(
+            client.post("/v1/chat/completions", json={"model": "m", "messages": []})
+        )
+        await asyncio.wait_for(_PausingStreamCtx.reached.wait(), timeout=5)
+        health = (await client.get("/health")).json()
+        assert health["pending_count"] == 1
+        assert health["pending_tool_calls"] == ["search"]
+        _PausingStreamCtx.release.set()
+        resp = await asyncio.wait_for(task, timeout=5)
+        assert resp.status_code == 200
+
+
+async def test_fragmented_tool_call_waits_for_the_window_boundary(monkeypatch):
+    """Ten fragments of one call must not trip max_batch into a mid-window flush."""
+    app = proxy_mod.create_app(make_config(window_size=16))
+    lines = [sse_line({"content": "ab"})]              # tokens 1-2
+    lines.append(tool_call_fragment("", name="search"))
+    lines += [tool_call_fragment(f'"f{i}"') for i in range(9)]  # tokens 3-12
+    lines.append(sse_line({"content": "cd"}))          # tokens 13-14, no boundary
+    lines.append("data: [DONE]")
+
+    resp = await post_completion(app, monkeypatch, lines)
+    out = _data_lines(resp.text)
+    assert out.index(sse_line({"content": "cd"})) < next(
+        i for i, line in enumerate(out) if "tool_calls" in line
+    )
+    assert out.index("data: [DONE]") == len(out) - 1
+    assert app.state.scheduler._interrupts == []  # noqa: SLF001
+
+
+class _ConnectFailingClient:
+    """Client shim whose connect fails, as an unreachable upstream does."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        pass
+
+    async def __aenter__(self) -> "_ConnectFailingClient":
+        raise httpx.ConnectError("All connection attempts failed")
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+
+async def test_unreachable_upstream_answers_with_sse_error(monkeypatch):
+    """A failed upstream connection becomes one parseable SSE error, not a crash."""
+    app = proxy_mod.create_app(make_config())
+    stream = io.StringIO()
+    app.state.metrics.stream = stream
+
+    class _Shim:
+        def __init__(self) -> None:
+            self.AsyncClient = lambda **kwargs: _ConnectFailingClient(**kwargs)  # noqa: E731
+
+    monkeypatch.setattr(proxy_mod, "httpx", _Shim())
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        resp = await client.post("/v1/chat/completions", json={"model": "m", "messages": []})
+
+    events = [event for event in resp.text.split("\n\n") if event.strip()]
+    assert any('"error"' in event for event in events)
+    assert events[-1] == "data: [DONE]"
+    assert "tokens=" in stream.getvalue()  # the metrics epilogue still ran

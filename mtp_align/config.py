@@ -8,7 +8,7 @@ the MTP-Align proxy listening on ``:8090``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
@@ -72,6 +72,10 @@ class MTPConfig:
             raise ValueError(
                 f"flush_policy must be 'window_boundary' or 'eager', got {self.flush_policy!r}"
             )
+        if self.benchmark_warmup < 0:
+            raise ValueError("benchmark_warmup must be >= 0")
+        if self.benchmark_tool_calls < 0:
+            raise ValueError("benchmark_tool_calls must be >= 0")
         if self.benchmark_tokens <= self.benchmark_warmup:
             raise ValueError("benchmark_tokens must exceed benchmark_warmup")
 

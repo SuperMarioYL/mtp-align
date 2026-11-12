@@ -144,7 +144,20 @@ class MTPScheduler:
         self._boundary_flushes = 0
 
     def queue_tool_call(self, call: ToolCall) -> None:
-        """Buffer a tool call for a future flush."""
+        """Buffer a tool call for a future flush.
+
+        A streamed tool call reaches the proxy as many SSE deltas that share one
+        ``id`` (the OpenAI ``index``): the first carries the function name, the
+        rest carry argument fragments. Those are one call, so an entry with an
+        already-queued id is merged rather than appended — otherwise a single
+        call would count several times against ``max_batch`` and force a spurious
+        mid-window flush.
+        """
+        for queued in self.batch.pending:
+            if queued.id == call.id:
+                if call.name and not queued.name:
+                    queued.name = call.name
+                return
         self.batch.pending.append(call)
 
     def on_token(self, token: Token | None = None) -> FlushDecision:

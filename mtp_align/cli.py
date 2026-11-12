@@ -14,7 +14,6 @@ Run ``mtp-align --help`` for the full surface.
 from __future__ import annotations
 
 import asyncio
-import sys
 from typing import Any
 
 import typer
@@ -76,7 +75,11 @@ def bench(
     window: int = typer.Option(4, "--window", help="MTP tokens per forward pass (DSV4=4)."),
     warmup: int = typer.Option(32, "--warmup", help="Warmup tokens discarded before timing."),
 ) -> None:
-    """Run the before/after tps benchmark and print a falsifiable delta table."""
+    """Run the before/after tps benchmark and print a falsifiable delta table.
+
+    Exits 1 when the tps delta misses the kill-gate, so a shell ``&&`` chain or
+    a CI step sees a falsified thesis instead of a pass.
+    """
     cfg = _build_config(
         upstream=upstream or "http://localhost:8080",
         window_size=window,
@@ -91,7 +94,8 @@ def bench(
     label = "SYNTHETIC (model-based upper bound — not a GPU measurement)" if synthetic else "REAL upstream"
     err_console.print(f"[bold]mtp-align bench[/bold]  ·  {label}")
     err_console.print(
-        f"  workload: {tokens} tokens, {tool_calls} tool calls, window={window}\n"
+        f"  workload: {tokens} tokens ({warmup} warmup), {tool_calls} tool calls, "
+        f"window={window}\n"
     )
 
     try:
@@ -138,6 +142,7 @@ def bench(
             err_console.print(
                 "  (synthetic result; the real gate is `mtp-align bench --upstream <url>`)"
             )
+        raise typer.Exit(code=1)
 
 
 @app.command()

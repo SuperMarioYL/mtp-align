@@ -53,3 +53,28 @@ def test_bench_mock_happy_path_still_succeeds():
     )
     assert result.exit_code == 0
     assert "kill-gate" in _all_output(result)
+
+
+def test_bench_gate_failure_exits_1():
+    """A kill-gate FAILED line must reach the exit status, not just the console."""
+    result = runner.invoke(cli_app, ["bench", "--tool-calls", "5"])
+    assert result.exit_code == 1
+    out = _all_output(result)
+    assert "kill-gate FAILED" in out
+    assert "Traceback" not in out
+
+
+def test_bench_negative_warmup_exits_2():
+    result = runner.invoke(cli_app, ["bench", "--warmup", "-1"])
+    assert result.exit_code == 2
+    out = _all_output(result)
+    assert "benchmark_warmup must be >= 0" in out
+    assert "Traceback" not in out
+
+
+def test_bench_negative_tool_calls_exits_2():
+    result = runner.invoke(cli_app, ["bench", "--tool-calls", "-1"])
+    assert result.exit_code == 2
+    out = _all_output(result)
+    assert "benchmark_tool_calls must be >= 0" in out
+    assert "Traceback" not in out

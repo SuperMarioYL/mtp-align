@@ -4,6 +4,45 @@ All notable changes to MTP-Align are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [semantic versioning](https://semver.org/).
 
+## [0.4.0] - 2026-11-12
+
+### Fixed
+
+- **Bench: the kill-gate now sets the exit status.** `bench` printed
+  `✗ kill-gate FAILED` and then exited 0, so `mtp-align bench && ...`, a CI
+  step, or any script reading `$?` treated a falsified thesis as a pass.
+  A failed gate now exits 1; the `--help` text states the contract.
+- **Bench: `--warmup` is honoured.** The option was parsed, stored, and
+  validated but never read by either engine, so `--warmup 400` and
+  `--warmup 32` produced identical numbers and the measured tps silently
+  included the warmup region. The timed region now starts after the warmup
+  prefix in both the mock and the HTTP engine, the reported token count is
+  the timed sample, and the bench header prints the warmup size.
+- **Bench: negative benchmark inputs are rejected.** `--warmup -1` and
+  `--tool-calls -1` were accepted; a negative tool count was silently
+  reinterpreted as zero calls. Both now exit 2 with a one-line constraint
+  error.
+- **Proxy: one streamed tool call is one pending call.** A real tool call
+  arrives as many SSE deltas sharing one `index`; the proxy queued each
+  delta as a separate pending call. `/health` therefore reported fragments
+  (`pending_count 3`, names `['search', '', '']`) and `max_batch` counted
+  fragments, so once the window exceeded `max_batch` a single call forced a
+  mid-window flush — the exact interrupt the scheduler exists to avoid.
+  Fragments now coalesce into one pending entry, keeping the first
+  non-empty name.
+- **Proxy: an upstream failure mid-stream answers with an SSE error.** A
+  connect/read error from the upstream escaped the streaming response, so
+  with the 200 headers already sent the agent got a truncated stream and the
+  server logged an ASGI traceback. The proxy now emits one `error` event
+  followed by `[DONE]`.
+
+### Changed
+
+- Version surfaces bumped in lockstep to 0.4.0: `VERSION`, `pyproject.toml`,
+  `mtp_align.__version__`, and `web/site.json` `content_version`.
+- The version lockstep test also pins the newest `CHANGELOG.md` heading and
+  the exact `mtp-align --version` output, which previously went unguarded.
+
 ## [0.3.0] - 2026-10-12
 
 ### Fixed
